@@ -4,7 +4,7 @@ use crate::version_files::{get_user_version_for_directory, get_user_version_for_
 use std::path::PathBuf;
 use std::str::FromStr;
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum UserVersionReader {
     Direct(UserVersion),
     Path(PathBuf),
@@ -14,14 +14,14 @@ impl UserVersionReader {
     pub fn into_user_version(self, config: &FnmConfig) -> Option<UserVersion> {
         match self {
             Self::Direct(uv) => Some(uv),
-            Self::Path(pathbuf) if pathbuf.is_file() => get_user_version_for_file(&pathbuf),
-            Self::Path(pathbuf) => get_user_version_for_directory(&pathbuf, config),
+            Self::Path(pathbuf) if pathbuf.is_file() => get_user_version_for_file(pathbuf, config),
+            Self::Path(pathbuf) => get_user_version_for_directory(pathbuf, config),
         }
     }
 }
 
 impl FromStr for UserVersionReader {
-    type Err = semver::Error;
+    type Err = node_semver::SemverError;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         let pathbuf = PathBuf::from_str(s);
@@ -45,7 +45,7 @@ mod tests {
     #[test]
     fn test_file_pathbuf_to_version() {
         let mut file = NamedTempFile::new().unwrap();
-        write!(file, "14").unwrap();
+        file.write_all(b"14").unwrap();
         let pathbuf = file.path().to_path_buf();
 
         let user_version =

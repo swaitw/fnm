@@ -1,17 +1,17 @@
-use std::str::FromStr;
+use clap::ValueEnum;
+use std::fmt::Display;
 
-#[derive(Debug)]
+#[derive(Debug, Clone, Copy, Default, ValueEnum)]
 pub enum VersionFileStrategy {
+    /// Use the local version of Node defined within the current directory
+    #[default]
     Local,
+    /// Use the version of Node defined within the current directory and all parent directories
     Recursive,
 }
 
 impl VersionFileStrategy {
-    pub fn possible_values() -> &'static [&'static str] {
-        &["local", "recursive"]
-    }
-
-    pub fn as_str(&self) -> &'static str {
+    pub fn as_str(self) -> &'static str {
         match self {
             VersionFileStrategy::Local => "local",
             VersionFileStrategy::Recursive => "recursive",
@@ -19,23 +19,8 @@ impl VersionFileStrategy {
     }
 }
 
-impl Default for VersionFileStrategy {
-    fn default() -> Self {
-        VersionFileStrategy::Local
-    }
-}
-
-impl FromStr for VersionFileStrategy {
-    type Err = String;
-
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        match s {
-            "local" => Ok(VersionFileStrategy::Local),
-            "recursive" => Ok(VersionFileStrategy::Recursive),
-            _ => Err(format!(
-                "Invalid strategy: {}. Expected one of: local, recursive",
-                s
-            )),
-        }
+impl Display for VersionFileStrategy {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.as_str())
     }
 }

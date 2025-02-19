@@ -1,11 +1,12 @@
 use super::command::Command;
 use crate::config::FnmConfig;
-use crate::directories;
 use crate::fs::symlink_dir;
 use crate::outln;
 use crate::path_ext::PathExt;
-use crate::shell::{infer_shell, Shell, AVAILABLE_SHELLS};
+use crate::shell::{infer_shell, Shell, Shells};
+use clap::ValueEnum;
 use colored::Colorize;
+use std::collections::HashMap;
 use std::fmt::Debug;
 use thiserror::Error;
 
@@ -13,8 +14,10 @@ use thiserror::Error;
 pub struct Env {
     /// The shell syntax to use. Infers when missing.
     #[clap(long)]
-    #[clap(possible_values = AVAILABLE_SHELLS)]
-    shell: Option<Box<dyn Shell>>,
+    shell: Option<Shells>,
+    /// Print JSON instead of shell commands.
+    #[clap(long, conflicts_with = "shell")]
+    json: bool,
     /// Deprecated. This is the default now.
     #[clap(long, hide = true)]
     multi: bool,
@@ -32,7 +35,7 @@ fn generate_symlink_path() -> String {
 }
 
 fn make_symlink(config: &FnmConfig) -> Result<std::path::PathBuf, Error> {
-    let base_dir = directories::multishell_storage().ensure_exists_silently();
+    let base_dir = config.multishell_storage().ensure_exists_silently();
     let mut temp_dir = base_dir.join(generate_symlink_path());
 
     while temp_dir.exists() {
@@ -40,8 +43,17 @@ fn make_symlink(config: &FnmConfig) -> Result<std::path::PathBuf, Error> {
     }
 
     match symlink_dir(config.default_version_dir(), &temp_dir) {
-        Ok(_) => Ok(temp_dir),
+        Ok(()) => Ok(temp_dir),
         Err(source) => Err(Error::CantCreateSymlink { source, temp_dir }),
+    }
+}
+
+#[inline]
+fn bool_as_str(value: bool) -> &'static str {
+    if value {
+        "true"
+    } else {
+        "false"
     }
 }
 
@@ -59,50 +71,59 @@ impl Command for Env {
             );
         }
 
+        let multishell_path = make_symlink(config)?;
+        let base_dir = config.base_dir_with_default();
+
+        let env_vars = [
+            ("FNM_MULTISHELL_PATH", multishell_path.to_str().unwrap()),
+            (
+                "FNM_VERSION_FILE_STRATEGY",
+                config.version_file_strategy().as_str(),
+            ),
+            ("FNM_DIR", base_dir.to_str().unwrap()),
+            ("FNM_LOGLEVEL", config.log_level().as_str()),
+            ("FNM_NODE_DIST_MIRROR", config.node_dist_mirror.as_str()),
+            (
+                "FNM_COREPACK_ENABLED",
+                bool_as_str(config.corepack_enabled()),
+            ),
+            ("FNM_RESOLVE_ENGINES", bool_as_str(config.resolve_engines())),
+            ("FNM_ARCH", config.arch.as_str()),
+        ];
+
+        if self.json {
+            println!(
+                "{}",
+                serde_json::to_string(&HashMap::from(env_vars)).unwrap()
+            );
+            return Ok(());
+        }
+
         let shell: Box<dyn Shell> = self
             .shell
-            .or_else(&infer_shell)
+            .map(Into::into)
+            .or_else(infer_shell)
             .ok_or(Error::CantInferShell)?;
-        let multishell_path = make_symlink(config)?;
+
         let binary_path = if cfg!(windows) {
-            multishell_path.clone()
+            shell.path(&multishell_path)
         } else {
-            multishell_path.join("bin")
+            shell.path(&multishell_path.join("bin"))
         };
-        println!("{}", shell.path(&binary_path)?);
-        println!(
-            "{}",
-            shell.set_env_var("FNM_MULTISHELL_PATH", multishell_path.to_str().unwrap())
-        );
-        println!(
-            "{}",
-            shell.set_env_var(
-                "FNM_VERSION_FILE_STRATEGY",
-                config.version_file_strategy().as_str()
-            )
-        );
-        println!(
-            "{}",
-            shell.set_env_var("FNM_DIR", config.base_dir_with_default().to_str().unwrap())
-        );
-        println!(
-            "{}",
-            shell.set_env_var("FNM_LOGLEVEL", config.log_level().clone().into())
-        );
-        println!(
-            "{}",
-            shell.set_env_var("FNM_NODE_DIST_MIRROR", config.node_dist_mirror.as_str())
-        );
-        println!(
-            "{}",
-            shell.set_env_var("FNM_ARCH", &config.arch.to_string())
-        );
+
+        println!("{}", binary_path?);
+
+        for (name, value) in &env_vars {
+            println!("{}", shell.set_env_var(name, value));
+        }
+
         if self.use_on_cd {
             println!("{}", shell.use_on_cd(config)?);
         }
         if let Some(v) = shell.rehash() {
-            println!("{}", v);
+            println!("{v}");
         }
+
         Ok(())
     }
 }
@@ -131,9 +152,9 @@ pub enum Error {
 }
 
 fn shells_as_string() -> String {
-    AVAILABLE_SHELLS
+    Shells::value_variants()
         .iter()
-        .map(|x| format!("* {}", x))
+        .map(|x| format!("* {x}"))
         .collect::<Vec<_>>()
         .join("\n")
 }
@@ -144,16 +165,13 @@ mod tests {
 
     #[test]
     fn test_smoke() {
-        use crate::shell;
         let config = FnmConfig::default();
-        let shell: Box<dyn Shell> = if cfg!(windows) {
-            Box::from(shell::WindowsCmd)
-        } else {
-            Box::from(shell::Bash)
-        };
         Env {
-            shell: Some(shell),
-            ..Env::default()
+            #[cfg(windows)]
+            shell: Some(Shells::Cmd),
+            #[cfg(not(windows))]
+            shell: Some(Shells::Bash),
+            ..Default::default()
         }
         .call(config);
     }

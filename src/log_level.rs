@@ -1,17 +1,31 @@
-#[derive(Debug, PartialEq, PartialOrd, Eq, Ord, Clone)]
+use std::fmt::Display;
+
+use clap::ValueEnum;
+
+#[derive(Debug, Default, PartialEq, PartialOrd, Eq, Ord, Clone, Copy, ValueEnum)]
 pub enum LogLevel {
     Quiet,
     Error,
+    #[default]
+    #[value(alias("all"))]
     Info,
 }
 
 impl LogLevel {
-    pub fn is_writable(&self, logging: &Self) -> bool {
-        use std::cmp::Ordering;
-        matches!(self.cmp(logging), Ordering::Greater | Ordering::Equal)
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Quiet => "quiet",
+            Self::Info => "info",
+            Self::Error => "error",
+        }
     }
 
-    pub fn writer_for(&self, logging: &Self) -> Box<dyn std::io::Write> {
+    pub fn is_writable(self, logging: Self) -> bool {
+        use std::cmp::Ordering;
+        matches!(self.cmp(&logging), Ordering::Greater | Ordering::Equal)
+    }
+
+    pub fn writer_for(self, logging: Self) -> Box<dyn std::io::Write> {
         if self.is_writable(logging) {
             match logging {
                 Self::Error => Box::from(std::io::stderr()),
@@ -27,26 +41,9 @@ impl LogLevel {
     }
 }
 
-impl From<LogLevel> for &'static str {
-    fn from(level: LogLevel) -> Self {
-        match level {
-            LogLevel::Quiet => "quiet",
-            LogLevel::Info => "info",
-            LogLevel::Error => "error",
-        }
-    }
-}
-
-impl std::str::FromStr for LogLevel {
-    type Err = &'static str;
-
-    fn from_str(s: &str) -> Result<LogLevel, Self::Err> {
-        match s {
-            "quiet" => Ok(Self::Quiet),
-            "info" | "all" => Ok(Self::Info),
-            "error" => Ok(Self::Error),
-            _ => Err("Unsupported log level"),
-        }
+impl Display for LogLevel {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.as_str())
     }
 }
 
@@ -54,7 +51,7 @@ impl std::str::FromStr for LogLevel {
 macro_rules! outln {
     ($config:ident, $level:path, $($expr:expr),+) => {{
         use $crate::log_level::LogLevel::*;
-        writeln!($config.log_level().writer_for(&$level), $($expr),+).expect("Can't write output");
+        writeln!($config.log_level().writer_for($level), $($expr),+).expect("Can't write output");
     }}
 }
 
@@ -64,9 +61,9 @@ mod tests {
 
     #[test]
     fn test_is_writable() {
-        assert!(!LogLevel::Quiet.is_writable(&LogLevel::Info));
-        assert!(!LogLevel::Error.is_writable(&LogLevel::Info));
-        assert!(LogLevel::Info.is_writable(&LogLevel::Info));
-        assert!(LogLevel::Info.is_writable(&LogLevel::Error));
+        assert!(!LogLevel::Quiet.is_writable(LogLevel::Info));
+        assert!(!LogLevel::Error.is_writable(LogLevel::Info));
+        assert!(LogLevel::Info.is_writable(LogLevel::Info));
+        assert!(LogLevel::Info.is_writable(LogLevel::Error));
     }
 }

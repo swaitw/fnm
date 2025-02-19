@@ -1,5 +1,5 @@
 node_modules/
-docs/screen_recording
+.ci/screen_recording
 /benchmarks/results
 /target
 **/*.rs.bk
@@ -7,3 +7,4 @@ feature_tests/.tmp
 *.log
 /site/public
 .vercel
+.proxy

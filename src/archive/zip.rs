@@ -18,8 +18,7 @@ impl<R: Read> Zip<R> {
 }
 
 impl<R: Read> Extract for Zip<R> {
-    fn extract_into<P: AsRef<Path>>(mut self, path: P) -> Result<(), Error> {
-        let path = path.as_ref();
+    fn extract_into(mut self: Box<Self>, path: &Path) -> Result<(), Error> {
         let mut tmp_zip_file = tempfile().expect("Can't get a temporary file");
 
         debug!("Created a temporary zip file");
@@ -42,7 +41,7 @@ impl<R: Read> Extract for Zip<R> {
                 }
             }
 
-            if (&*file.name()).ends_with('/') {
+            if file.name().ends_with('/') {
                 debug!(
                     "File {} extracted to \"{}\"",
                     i,
@@ -58,7 +57,7 @@ impl<R: Read> Extract for Zip<R> {
                 );
                 if let Some(p) = outpath.parent() {
                     if !p.exists() {
-                        fs::create_dir_all(&p)?;
+                        fs::create_dir_all(p)?;
                     }
                 }
                 let mut outfile = fs::File::create(&outpath)?;
@@ -86,11 +85,11 @@ mod tests {
 
     #[test_log::test]
     fn test_zip_extraction() {
-        let temp_dir = tempfile::tempdir().expect("Can't create a temp directory");
+        let temp_dir = &tempfile::tempdir().expect("Can't create a temp directory");
         let response = crate::http::get("https://nodejs.org/dist/v12.0.0/node-v12.0.0-win-x64.zip")
             .expect("Can't make request to Node v12.0.0 zip file");
-        Zip::new(response)
-            .extract_into(&temp_dir)
+        Box::new(Zip::new(response))
+            .extract_into(temp_dir.as_ref())
             .expect("Can't unzip files");
         let node_file = temp_dir
             .as_ref()

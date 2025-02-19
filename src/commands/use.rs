@@ -4,6 +4,7 @@ use crate::current_version::current_version;
 use crate::fs;
 use crate::installed_versions;
 use crate::outln;
+use crate::shell;
 use crate::system_version;
 use crate::user_version::UserVersion;
 use crate::version::Version;
@@ -46,7 +47,13 @@ impl Command for Use {
                 VersionFileStrategy::Local => InferVersionError::Local,
                 VersionFileStrategy::Recursive => InferVersionError::Recursive,
             })
-            .map_err(|source| Error::CantInferVersion { source })?;
+            .map_err(|source| Error::CantInferVersion { source });
+
+        // Swallow the missing version error if `silent_if_unchanged` was provided
+        let requested_version = match (self.silent_if_unchanged, requested_version) {
+            (true, Err(_)) => return Ok(()),
+            (_, v) => v?,
+        };
 
         let (message, version_path) = if let UserVersion::Full(Version::Bypassed) =
             requested_version
@@ -150,17 +157,17 @@ fn install_new_version(
 ///
 /// This way, we can create a symlink if it is missing.
 fn replace_symlink(from: &std::path::Path, to: &std::path::Path) -> std::io::Result<()> {
-    let symlink_deletion_result = fs::remove_symlink_dir(&to);
-    match fs::symlink_dir(&from, &to) {
-        ok @ Ok(_) => ok,
+    let symlink_deletion_result = fs::remove_symlink_dir(to);
+    match fs::symlink_dir(from, to) {
+        ok @ Ok(()) => ok,
         err @ Err(_) => symlink_deletion_result.and(err),
     }
 }
 
 fn should_install_interactively(requested_version: &UserVersion) -> bool {
-    use std::io::Write;
+    use std::io::{IsTerminal, Write};
 
-    if !(atty::is(atty::Stream::Stdout) && atty::is(atty::Stream::Stdin)) {
+    if !(std::io::stdout().is_terminal() && std::io::stdin().is_terminal()) {
         return false;
     }
 
@@ -169,7 +176,7 @@ fn should_install_interactively(requested_version: &UserVersion) -> bool {
         requested_version.to_string().italic()
     );
     eprintln!("{}", error_message.red());
-    let do_you_want = format!("Do you want to install it? {} [y/n]:", "answer".bold());
+    let do_you_want = format!("Do you want to install it? {} [y/N]:", "answer".bold());
     eprint!("{} ", do_you_want.yellow());
     std::io::stdout().flush().unwrap();
     let mut s = String::new();
@@ -184,15 +191,20 @@ fn warn_if_multishell_path_not_in_path_env_var(
     multishell_path: &std::path::Path,
     config: &FnmConfig,
 ) {
-    let bin_path = if cfg!(unix) {
-        multishell_path.join("bin")
-    } else {
-        multishell_path.to_path_buf()
-    };
+    if let Some(path_var) = std::env::var_os("PATH") {
+        let bin_path = if cfg!(unix) {
+            multishell_path.join("bin")
+        } else {
+            multishell_path.to_path_buf()
+        };
 
-    for path in std::env::split_paths(&std::env::var("PATH").unwrap_or_default()) {
-        if bin_path == path {
-            return;
+        let fixed_path = bin_path.to_str().and_then(shell::maybe_fix_windows_path);
+        let fixed_path = fixed_path.as_deref();
+
+        for path in std::env::split_paths(&path_var) {
+            if bin_path == path || fixed_path == path.to_str() {
+                return;
+            }
         }
     }
 
